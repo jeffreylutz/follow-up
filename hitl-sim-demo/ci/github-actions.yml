@@ -1,0 +1,65 @@
+# Example CI pipeline for the tiered HIL strategy from HITL_SIMULATOR_SUMMARY.md.
+#
+# Tier 0 (this file, runs on every push, no hardware):
+#   - unit + integration tests (pytest) against the deterministic software plant
+#   - Robot Framework HIL acceptance suite
+#   - (optional) Renode job: run the *real production firmware* on an emulated SoC
+#
+# Tier 1 (self-hosted Raspberry Pi runners, not shown) would run the same Robot
+# suite with the transport swapped to CAN/serial against a real controller.
+#
+# Copy to .github/workflows/hil.yml to use.
+
+name: HIL
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  software-hil:
+    name: Software plant (pytest + Robot)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: hitl-sim-demo
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+
+      - name: Sync (incl. dev group)
+        run: uv sync --group dev
+
+      - name: Unit + integration tests
+        run: uv run pytest -q
+
+      - name: Robot Framework HIL acceptance suite
+        run: uv run python -m robot --pythonpath robot --outputdir robot_out robot/actuator_hitl.robot
+
+      - name: Run all scenarios and archive logs
+        run: uv run hitl-sim run all --outdir scenario_logs
+
+      - name: Upload artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: hil-logs
+          path: |
+            hitl-sim-demo/robot_out/
+            hitl-sim-demo/scenario_logs/
+
+  # Tier 0 emulation: run unmodified production firmware on an emulated target.
+  # Renode + its GitHub Action (antmicro) make this a drop-in CI step. Sketch only —
+  # enable once a Renode platform (.repl) and firmware (.elf) exist.
+  #
+  # firmware-emulation:
+  #   name: Firmware on emulated SoC (Renode)
+  #   runs-on: ubuntu-latest
+  #   steps:
+  #     - uses: actions/checkout@v4
+  #     - uses: antmicro/renode-test-action@v1
+  #       with:
+  #         renode-version: latest
+  #         tests: ci/firmware.robot   # Renode-driven Robot suite booting the .elf

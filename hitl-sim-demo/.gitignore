@@ -1,0 +1,12 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.venv/
+
+# Test/scenario outputs
+robot_out/
+scenario_logs/
+*.csv
+*.jsonl
