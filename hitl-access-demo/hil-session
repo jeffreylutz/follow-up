@@ -1,0 +1,78 @@
+#!/usr/bin/env bash
+# HITL bench access wrapper — Tier 1 demo (see ../HITL_APPROACH.md).
+#
+# Runs as the sshd ForceCommand for the `hil` group. It:
+#   1. takes a BLOCKING flock on a local lockfile  -> mutual exclusion + queue/wait
+#   2. runs the session under a HARD wall-clock cap -> auto-logoff + bench release
+# Both the interactive shell and the CI path ($SSH_ORIGINAL_COMMAND) go through it.
+set -euo pipefail
+
+# Tunables come from compose `environment:`, persisted by the entrypoint into
+# /etc/hil.env (sshd does not pass the daemon environment to ForceCommand).
+[ -f /etc/hil.env ] && . /etc/hil.env
+QUEUE_TIMEOUT="${HIL_QUEUE_TIMEOUT:-120}"   # max seconds a 2nd accessor waits in line
+MAX_SESSION="${HIL_MAX_SESSION:-30}"        # hard wall-clock cap per session (seconds)
+
+LOCKDIR=/run/hil
+LOCK="$LOCKDIR/bench.lock"
+HOLDER="$LOCKDIR/holder"
+
+client_ip="${SSH_CONNECTION%% *}"           # first field of SSH_CONNECTION = client IP
+who="$(id -un) from ${client_ip:-unknown}"
+
+# Open the lockfile on fd 9. The lock lives exactly as long as this fd is open;
+# the kernel releases it automatically when this process tree exits OR the SSH
+# connection drops/crashes — that is the crash-safe property.
+exec 9>"$LOCK"
+
+# --- (A) Mutual exclusion with queue/wait ---
+if ! flock -n 9; then
+    if [ -s "$HOLDER" ]; then
+        echo "HIL bench is BUSY — held by: $(cat "$HOLDER")" >&2
+    else
+        echo "HIL bench is BUSY." >&2
+    fi
+    echo "Waiting up to ${QUEUE_TIMEOUT}s for your turn..." >&2
+    if ! flock -w "$QUEUE_TIMEOUT" 9; then
+        echo "Still busy after ${QUEUE_TIMEOUT}s — giving up. Try again later." >&2
+        exit 75   # EX_TEMPFAIL — a CI caller should retry later
+    fi
+fi
+
+# --- We now hold the bench exclusively. ---
+printf '%s since %s\n' "$who" "$(date -Is)" > "$HOLDER"
+cleanup() { rm -f "$HOLDER"; echo "=== HIL bench released. ===" >&2; }
+trap cleanup EXIT
+
+echo "=== HIL bench ACQUIRED by $who ===" >&2
+echo "Hard time limit: ${MAX_SESSION}s — you will be auto-logged-off at the deadline." >&2
+
+# --- (B) Hard wall-clock cap ---
+# Real systemd host -> systemd-run --scope -p RuntimeMaxSec (as in the doc).
+# Container / no systemd -> GNU coreutils `timeout` (the doc's documented fallback).
+# NOTE: run the shell as a CHILD (not exec) so the EXIT trap can release the holder.
+run_capped() {
+    if [ -d /run/systemd/system ] && command -v systemd-run >/dev/null 2>&1; then
+        systemd-run --quiet --scope -p RuntimeMaxSec="${MAX_SESSION}s" "$@"
+    else
+        # --foreground: don't isolate the child in its own process group, so a PTY
+        #   hangup (client disconnect) propagates to it -> prompt release on disconnect.
+        # SIGHUP at the deadline reads as a logout to bash; KILL 3s later as a backstop.
+        timeout --foreground --signal=HUP --kill-after=3s "${MAX_SESSION}s" "$@"
+    fi
+}
+
+set +e
+if [ -n "${SSH_ORIGINAL_COMMAND:-}" ]; then
+    run_capped /bin/bash -lc "$SSH_ORIGINAL_COMMAND"   # CI / non-interactive path
+else
+    run_capped /bin/bash -l                            # interactive path
+fi
+rc=$?
+set -e
+
+# timeout reports 124 (signal sent) or 137 (128+SIGKILL) / 129 (128+SIGHUP) on expiry.
+case "$rc" in
+    124|129|137) echo ">>> Time limit reached — session terminated." >&2 ;;
+esac
+exit "$rc"

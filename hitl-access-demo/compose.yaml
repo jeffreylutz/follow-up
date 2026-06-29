@@ -1,0 +1,15 @@
+name: hitl-access
+
+services:
+  bench:
+    build: .
+    image: hitl-access-bench
+    container_name: hil-bench
+    ports:
+      - "2222:22"            # ssh dev@localhost -p 2222
+    environment:
+      # Short values so the demo is snappy. Raise for realistic use.
+      HIL_QUEUE_TIMEOUT: "120"   # seconds a 2nd accessor will wait in line
+      HIL_MAX_SESSION: "30"      # hard cap per session (seconds)
+    tmpfs:
+      - /run                  # clean /run (lockfile + host keys) each start

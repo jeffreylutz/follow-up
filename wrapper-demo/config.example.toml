@@ -1,0 +1,24 @@
+# RUNTIME ops config (copy to config.toml). Varies per machine/site; the command
+# recipes themselves are baked into the binary at build time (commands.toml).
+# XWRAP_* env vars override these (e.g. XWRAP_MAX_CONCURRENCY=1,
+# XWRAP_UPDATE__ENABLED=true for nested keys).
+
+max_concurrency = 2
+acquire_timeout = 600        # seconds to wait for a seat + license
+poll_interval = 2            # seconds between retries
+
+# License (FlexLM). Leave server/feature blank to disable the lmstat gate.
+# For the demo, point lmstat_path at the mock script.
+license_server = "2100@licsrv"
+license_feature = "Vivado_System_Edition"
+lmstat_path = "mocks/mock_lmstat.sh"
+
+# Env vars injected into the wrapped child process.
+[extra_env]
+XILINXD_LICENSE_FILE = "2100@licsrv"
+
+# Self-update from a Nexus raw (hosted) repository.
+[update]
+enabled = false
+nexus_url = "https://nexus.example.com/repository/raw-hosted/xwrap"
+ttl_secs = 86400             # check at most once per day

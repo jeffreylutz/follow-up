@@ -1,0 +1,25 @@
+# BUILD-TIME recipe manifest.
+#
+# This file is read and validated by build.rs at compile time and embedded into
+# the binary (src/commands.rs `include_str!`). It defines the executable being
+# wrapped and the named commands ("recipes") the produced binary exposes as
+# subcommands. Change this file and rebuild to specialize the binary for a
+# different tool or site — a malformed manifest fails `cargo build`.
+
+[wrapped]
+name = "vivado"
+# Local path or https URL of the executable to wrap. A URL is downloaded,
+# cached, and SHA256-verified on first use; a local path is copied into the cache.
+source = "mocks/mock_vivado.sh"
+sha256 = ""            # "" disables integrity verification (demo)
+version = "2025.1"     # used in the cache path
+
+[[command]]
+name = "synth"
+about = "Run synthesis in batch mode"
+args = ["-mode", "batch", "-source", "synth.tcl"]
+
+[[command]]
+name = "impl"
+about = "Run implementation in batch mode"
+args = ["-mode", "batch", "-source", "impl.tcl"]
